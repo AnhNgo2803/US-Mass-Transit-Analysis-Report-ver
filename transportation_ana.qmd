@@ -1,0 +1,774 @@
+---
+title: "Mass Transit Analysis"
+author: 
+  - name: "Ngo Le Duy Anh"
+    url: "https://github.com/AnhNgo2803"
+date: 09-14-2025
+format:
+  html:
+    code-fold: true 
+    code-tools: true 
+    toc: true   # enable table of contents
+    toc-depth: 3
+---
+
+![](images/topic_image.png){fig-align="center"}
+**Learn more**: [Insight Dashboard](https://leduyanhngo-dashboard-mass-transit.share.connect.posit.cloud/), [Github Repository](https://github.com/AnhNgo2803/Dashboard-Mass-Transit-Analysis)
+
+**Data Source**: [Kaggle - US Monthly Transportation Statistics](%22https://www.kaggle.com/datasets/utkarshx27/monthly-transportation-statistics/data%22)
+
+# 1. Executive Summary
+
+-   **Objective**: This project investigates the performance of U.S. mass transit systems by examining ridership trends and the socio-economic factors that drive them. The goal is to provide policy-oriented recommendations that can support recovery and future growth.
+
+-   **Data & Methods**: The analysis uses quarterly and monthly data from 2005 to 2022, applying regression models to three transit modes: Route Bus, Urban Rail, and Other Modes. Independent variables include government spending, fuel prices, unemployment rate, and real GDP.
+
+-   **Findings**:
+
+    -   **Route Bus**: Adjusted R² = 85.3%. Strongly influenced by transit spending (+), diesel price (+), unemployment rate (−), and real GDP (−).
+    -   **Urban Rail**: Adjusted R² = 70.8%. Mainly shaped by gas price (+), unemployment rate (+), and real GDP (+).
+    -   **Other Modes**: Adjusted R² = 83.1%. Impacted by a mix of spending, fuel prices, unemployment, and GDP.
+
+-   **Key Insights**:
+
+    -   GDP and unemployment are the most consistent factors across all transit modes.
+    -   Fuel prices influence ridership differently: diesel matters for buses, gasoline for rail.
+    -   Government investment supports ridership, but macroeconomic forces explain more of the variation.
+
+-   **COVID-19 Impact**: The pandemic introduced a structural break that disrupted historical ridership patterns. This limits the predictive power of pre-2020 models.
+
+-   **Recommendations**:
+
+    -   **Route Bus**: Increase funding for stations and fare subsidies, while monitoring diesel price, GDP, and unemployment.
+    -   **Urban Rail**: Introduce flexible pricing to support unemployed riders and adapt capacity planning when fuel prices rise.
+    -   **General**: Use macroeconomic indicators alongside investment decisions to guide long-term strategy.
+
+# 2. Problem statement
+
+The central problem is how to evaluate transit performance by uncovering key ridership patterns and identifying the major factors—both economic and structural—that drive them. Without clarity, transit agencies risk making policy decisions that misalign with actual demand drivers.
+
+# 3. Data preparation and manipulation
+
+## 3.1 Data pre-processing orientation
+
+Since the data set contains up to 136 columns, I created a new data frame that only maintain essential columns that serve the final target of this project.Thus, necessary variables maintained in the data frame include:
+
+**Time**
+
+-   \[2\] Date
+
+**Public Transit Metrics**
+
+-   \[9\] Transit.Ridership...Other.Transit.Modes...Adjusted
+
+-   \[10\] Transit.Ridership...Fixed.Route.Bus...Adjusted
+
+-   \[11\] Transit.Ridership...Urban.Rail...Adjusted
+
+-   \[41\] State.and.Local.Government.Construction.Spending...Mass.Transit
+
+**Passenger Rail Metrics**
+
+-   \[101\] Passenger.Rail.Passengers
+
+-   \[108\] Amtrak.On.time.Performance
+
+**Socio-Economic Factors**
+
+-   \[86\] Highway.Fuel.Price...On.highway.Diesel
+
+-   \[87\] Highway.Fuel.Price...Regular.Gasoline
+
+-   \[97\] Unemployment.Rate...Seasonally.Adjusted
+
+-   \[100\] Real.Gross.Domestic.Product...Seasonally.Adjusted
+
+## 3.2 Data import
+
+```{r}
+#| echo: True # display code
+#| results: "hide" #hide output
+#| warning: false
+#| message: false
+library(tidyverse)
+library(scales)
+```
+
+```{r}
+# import dataset
+trans <- read.csv('Monthly_Transportation_Statistics.csv')
+```
+
+```{r}
+ncol(trans)
+```
+
+```{r}
+# create a list of col maintained
+main_col <- c(1,2,9,10,11,41,101,86,87,97,100) # 11 cols
+
+new_trans <- trans[  ,main_col]
+
+ncol(new_trans) # check number of columns
+```
+
+```{r}
+# check column names again 
+colnames(new_trans)
+```
+
+## 3.3 Data processing
+
+```{r}
+# briefly see the structure
+glimpse(new_trans)
+```
+
+### a/ Dealing with variable names
+
+```{r}
+# rename some cols for easier processing
+new_trans <- new_trans %>% 
+  rename(
+    "Ridership.other_modes" = "Transit.Ridership...Other.Transit.Modes...Adjusted",
+    "Ridership.route_bus" = "Transit.Ridership...Fixed.Route.Bus...Adjusted",
+    "Ridership.urban_rail" = "Transit.Ridership...Urban.Rail...Adjusted",
+    "Spending.mass_transit" = "State.and.Local.Government.Construction.Spending...Mass.Transit",
+    "Rail_passengers" = "Passenger.Rail.Passengers",
+    "Highway.Diesel.Price" = "Highway.Fuel.Price...On.highway.Diesel",
+    "Highway.Gasoline.Price" = "Highway.Fuel.Price...Regular.Gasoline",
+    "Unemployment.Rate" = "Unemployment.Rate...Seasonally.Adjusted",
+    "Real.GDP.Seasonal" = "Real.Gross.Domestic.Product...Seasonally.Adjusted",
+  )
+
+# check again
+glimpse(new_trans)
+```
+
+### b/ Dealing with large Na value range
+
+```{r}
+library(naniar)
+# check missing value of each column
+gg_miss_var(new_trans)
+```
+
+**Evaluation**
+
+Since Na values in large data range may trigger bias and incorrect statistic results, I will concentrate only on the valid range, which have non-Na values.
+
+```{r}
+# change data type of Date firstly from string to date
+new_trans$Date <- as.Date(new_trans$Date, format = "%m/%d/%Y %I:%M:%S %p")
+```
+
+```{r}
+# extract full date into each element (month,year)
+new_trans <- new_trans %>% 
+  mutate(year = year(Date),
+         month= month(Date))
+str(new_trans)
+```
+
+```{r}
+# find the earliest dates having non-Na values
+earliest_date <- new_trans %>% 
+  select(-Date,Index) %>% 
+  summarise(across(everything(),~min(new_trans$Date[!is.na(.)])))
+
+# pivoting columns and earliest dates
+dates1 <- earliest_date %>% 
+  pivot_longer(cols = everything(), names_to = "Column", values_to = "Value") %>% 
+  arrange(desc(Value))
+
+dates1
+```
+
+```{r}
+# find a latest date of each column having valid data
+latest_date <- new_trans %>% 
+  select(-Date) %>% 
+  summarise(across(everything(),~max(new_trans$Date[!is.na(.)])))
+
+# pivoting columns and latest dates
+dates2 <- latest_date %>% 
+  pivot_longer(cols= everything(), names_to="Column", values_to="Value") %>% 
+  arrange(desc(Value))
+
+dates2
+```
+
+**Evaluation**
+
+From two query codes above, the valid data range would be the minimum (earliest) date having non-Na values and the maximum (latest date) having non-Na values across all variables.
+
+```{r}
+# find the minimum date having non-Na values across all variables
+min_date <- max(dates1$Value)
+# find the maximum date existing non-Na values across all variables
+max_date <- min(dates2$Value)
+
+# print
+paste("The valid data range is from", min_date, "to", max_date)
+```
+
+```{r}
+df_trans <- new_trans %>% filter(Date>=min_date & Date <= max_date)
+head(df_trans)
+```
+
+```{r}
+# check missing value of each column again
+gg_miss_var(df_trans)
+```
+
+### c/ Deal with Na values in `Real.GDP.Seasonal`
+
+**Initial thinking**
+
+From my viewpoint, Na values in this case may not be occurred due to missing values. Instead, this indicator is recorded at a certain time frame in year, which trigger this situation. Thus, I firstly replace all Na with 0 and then create a point chart to determine my hypothesis.
+
+```{r}
+# Replace Na with 0 in Real.Gdp.seasonal
+df_trans <- df_trans %>% mutate(Real.GDP.Seasonal = replace_na(Real.GDP.Seasonal,0))
+```
+
+```{r}
+#| fig-cap: "The point chart shows that Real GDP is updated periodically"
+# create a point chart
+df_trans %>% 
+  filter(Date >= "2007-01-01" & Date <= "2010-01-01") %>% 
+  ggplot(aes(x = Date, y = Real.GDP.Seasonal))+
+    geom_point(size=1, color= "red")
+```
+
+**Problem identification**
+
+Through the point chart, it can be seen that the real GDP figure is recorded quarterly, which conflicts with other variables updated monthly and triggers this issue.
+
+**Solution**
+
+I will separate this variable from the current dataset and create another variable having the real GDP by quarter
+
+```{r}
+# create a variable of real GDP by year
+real_gdp <- df_trans %>% 
+  mutate(quarter = paste0(year(Date),"-Q",quarter(Date))) %>% #create quarter column
+  group_by(quarter) %>% 
+  summarise(real_gdp = max(Real.GDP.Seasonal))
+head(real_gdp,12)
+```
+
+```{r}
+# remove real GDP variable from dataset
+df_trans <- df_trans %>% 
+  mutate(Real.GDP.Seasonal = NULL)
+glimpse(df_trans)
+```
+
+# 4. Data Analysis
+
+## 4.1 Public Transit Trends
+
+```{r}
+# create a dataframe about average ridership of 3 mass transit modes
+ridership.mean <- df_trans %>% 
+  group_by(year) %>% 
+  summarise(ridership_other.modes = mean(`Ridership.other_modes`),
+            ridership_route.bus = mean(`Ridership.route_bus`),
+            ridership_urban.rail = mean(`Ridership.urban_rail`))
+head(ridership.mean)
+```
+
+```{r}
+# pivoting ridership.mean data for later visualization
+ridership.long <- ridership.mean %>% 
+  pivot_longer(cols= starts_with("ridership"),
+               names_to="ridership_category",
+               values_to="ridership_value")
+head(ridership.long)
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-cap: "Average ridership of mass transit modes"
+
+# Visualize the data result
+# hex color palette: #A8E3D2, #E37896, #DE654E, #664EDE
+
+# Average ridership:bus,rail,other modes
+public_transit_trend <- ridership.long %>% 
+  
+  # set specification of chart
+  ggplot(aes(y= ridership_value, x=year, colour=ridership_category, shape = ridership_category))+
+  geom_line()+
+  geom_point(size=3)+
+  scale_x_continuous(breaks= seq(2005,2022,by=1))+
+  scale_y_continuous(labels = number_format(big.mark = ",", decimal.mark = ".", scale = 1e-6, suffix = "M"))+
+  
+  # custom theme
+  theme_classic() +
+  theme(
+    panel.background = element_rect(fill = "#A8E3D2", colour = NA),
+    plot.background = element_rect(fill = "#A8E3D2", colour = NA),
+    plot.title = element_text(size = 20, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(size = 10, hjust = 0.5, face = "italic")
+  ) +
+  
+  # custom line of chart
+  scale_color_manual(values= c(ridership_other.modes = "#E37896",
+                               ridership_route.bus = "#DE654E",
+                               ridership_urban.rail = "#664EDE"))+
+  scale_shape_manual(values = c(15,17,19))+
+  
+  # Custom labels on lines instead of legend
+  annotate("text", x = 2005, y = 490e6, label = "Route Bus", color = "#DE654E") +
+  annotate("text", x = 2005, y = 370e6, label = "Urban Rail", color = "#664EDE") +
+  annotate("text", x = 2005.2, y = 35e6, label = "Other Modes", color = "#E37896") +
+  
+  # Custom outstanding values (2020 values)
+  annotate("text", x = 2020.4, y = 232e6, label = "207.9M", color = "#DE654E") +
+  annotate("text", x = 2020, y = 137e6, label = " 157.5M", color = "#664EDE") +
+  
+  # remove legends
+  guides(color="none",shape="none")+
+  
+  # custom labels
+  labs(
+    title="Average ridership of mass transit modes",
+    x="", y="",
+    subtitle="Ridership (Million Trips)"
+  )
+public_transit_trend
+```
+
+**Evaluation**
+
+In general, it can be observed that Route Bus and Urban Rail are the two dominant mass transit modes most frequently chosen by users.
+
+From 2005 to 2019, Urban Rail experienced a gradual upward trend in ridership, increasing from around 330 to approximately 400 million trips — a growth of about 70 million trips. Meanwhile, although Route Bus was initially more popular in the mid-2000s, its ridership steadily declined from roughly 440 million trips in 2005 to around 380 million trips in 2019, representing a decrease of about 60 million trips. Notably, 2016 marked the intersection point of the two modes, as Urban Rail surpassed Route Bus in ridership, signaling a shift in public transit preference. By contrast, other transit modes (e.g., trolleybuses, water taxis) remained the least utilized throughout the period, consistently staying below 50 million trips annually.
+
+From 2019 to 2020, the ridership of all three modes experienced a sharp decline due to the COVID-19 pandemic, with Route Bus and Urban Rail dropping dramatically to 207.9 million and 157.5 million trips, respectively. However, in the subsequent two years, ridership levels across all modes showed signs of gradual recovery, though still far below pre-pandemic levels.
+
+## 4.2 Investment Impact
+
+The first factor to be examined is the impact of government investment. Since the government plays a central role in financial allocation and legal management, this analysis is based on the initial hypothesis that a higher level of government financial engagement may significantly influence public transportation ridership.
+
+```{r}
+#| echo: false       # hide code
+#| results: "hide"   # hide result printed (text, table, console…)
+#| warning: false    # hide warning
+#| message: false    # hide message
+str(df_trans)
+```
+
+```{r}
+# add mean of MassTransit spending by year to the previous table
+ridership.mean <- ridership.mean %>% 
+  left_join(
+    df_trans %>% 
+      group_by(year) %>% 
+      summarise(MassTransit.spending = mean(`Spending.mass_transit`),.groups="drop"),
+    by= 'year'
+  )
+
+head(ridership.mean)
+```
+
+```{r}
+#| warning: false    # hide warning
+#| message: false    # hide message
+#| fig-cap: "Heatmap of correlation coefficient"
+
+# Check correlation coefficient
+
+library(ggcorrplot) # load library
+
+# calculate correlation coefficient
+cor_var <- ridership.mean[ ,-1] # take only correlation variables
+
+result <- cor(cor_var) # calculation of cor_var
+
+ggcorrplot(result, lab = TRUE, type = "lower") # visualize heat map
+```
+
+**Comment**
+
+It can be observed that spending on Mass Transit has a strong positive linear relationship with the ridership of route bus, followed by urban rail with a medium positive correlation coefficient. However, the ridership of other modes show that it does not have a strong linear relationship with mass transit spending, which is implied that the mass transit spending cannot explain for the variation of other modes' ridership.
+
+**Further demonstration**
+
+Using scatter plot for better linear relationship observation between mass transit spending and route bus/urban rail
+
+```{r}
+#| fig-width: 8
+#| fig-height: 10
+par(mfrow = c(3,1))
+
+# plot 1
+plot(x = df_trans$`Spending.mass_transit`, y = df_trans$`Ridership.route_bus`,
+     main= "Correlation of Mass Transit spending vs. Route Bus ridership",
+     xlab = "Mass Transit spending", ylab = "Route bus", col = 'red')
+
+# plot 2
+plot(df_trans$`Ridership.urban_rail`~df_trans$`Spending.mass_transit`,
+     main= "Correlation of Mass Transit spending vs. Urban Rail ridership",
+     xlab = "Mass Transit spending", ylab = "Urban Rail", col = 'coral')
+
+# plot 3
+plot(x = df_trans$`Spending.mass_transit`, y = df_trans$`Ridership.other_modes`,
+     main= "Correlation of Mass Transit spending vs. Other Modes ridership",
+     xlab = "Mass Transit spending", ylab = "Other Modes", col = 'purple')
+```
+
+**Evaluation**
+
+In the scatter plot, it can be observed that there may be 2 patterns existing in the plots, which represent 2 different periods from the 2000s to 2022. Moreover, as analyzed in `Public Transit Trends` section, from 2005 to 2022, the COVID-19 pandemic triggered the remarkable fall in average ridership of route bus and urban rail. As a result, this factor may cause 2 different clusters. Therefore, I created another scatter plot colored by 2 periods, before and after the pandemic.
+
+```{r}
+# add a category column before/after the COVID-19
+df_trans <- df_trans %>% 
+  mutate(period = if_else(year < 2020,"before COVID","after COVID"))
+head(df_trans)
+```
+
+```{r}
+# Rail Ridership & Spending correlation by Period
+plot1 <- ggplot(df_trans, aes(y = `Ridership.urban_rail`, x = `Spending.mass_transit`, colour = period))+
+  geom_point(size = 3)+
+  scale_color_manual(values = c("before COVID" = "#4420F5","after COVID" = "#F54420"))+
+  labs(title= "Rail Ridership & Spending correlation by Period",
+       x = "Spending",
+       y = "Urban Rail Ridership",
+       color = "Period")+
+  theme_minimal()+
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    axis.title = element_text(size = 12))
+
+# Bus Ridership & Spending correlation by Period
+plot2 <- ggplot(df_trans, aes(y = `Ridership.route_bus`, x = `Spending.mass_transit`, colour = period))+
+  geom_point(size = 3)+
+  scale_color_manual(values = c("before COVID" = "#4420F5","after COVID" = "#F54420"))+
+  labs(title= "Bus Ridership & Spending correlation by Period",
+       x = "Spending",
+       y = "Route Bus Ridership",
+       color = "Period")+
+  theme_minimal()+
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    axis.title = element_text(size = 12))
+
+# Bus Ridership & Spending correlation by Period
+plot3 <- ggplot(df_trans, aes(y = `Ridership.other_modes`, x = `Spending.mass_transit`, colour = period))+
+  geom_point(size = 3)+
+  scale_color_manual(values = c("before COVID" = "#4420F5","after COVID" = "#F54420"))+
+  labs(title= "Other modes Ridership & Spending correlation by Period",
+       x = "Spending",
+       y = "Other modes Ridership",
+       color = "Period")+
+  theme_minimal()+
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.title = element_text(size = 12))
+```
+
+```{r}
+#| fig-cap: Compare transit methods before and after the COVID-19 pandemic
+#| fig-width: 10
+#| fig-height: 12
+
+library(patchwork)
+
+plot1/plot2/plot3
+```
+
+Indeed, two clusters represent two periods before and after the COVID-19 pandemic, which lead to different pattern in a scatter plot. As a result, the period before and after the pandemic showed a dramatic transformation in mass transit consumption of US citizens, which had been existed for many years before.
+
+**Separate period**
+
+In order to make the analysis more accurate, the data range is concentrated on period before the COVID-19, when all core elements of mass transit popularity had been remained for decades, to inspect the correlation of investment and ridership.
+
+```{r}
+# create a df of data before the pandemic
+before_covid <- df_trans %>% 
+  filter(period == "before COVID")
+
+after_covid <- df_trans %>% 
+  filter(period == "after COVID")
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 12
+#| fig-cap: "Correlation between ridership and spending before the COVID-19"
+
+plota <- ggplot(before_covid, aes(y = Ridership.route_bus, x = Spending.mass_transit))+
+  geom_point(size = 3, colour='#487CF0')+
+  labs(title = "Route Bus and spending before the pandemic",
+       x ="Spending", y = "Ridership")
+
+plotb <- ggplot(before_covid, aes(y = Ridership.urban_rail, x = Spending.mass_transit))+
+  geom_point(size = 3, colour='#F0BB48')+
+  labs(title = "Urban Rail and spending before the pandemic",
+       x ="Spending", y = "Ridership")
+
+plotc <- ggplot(before_covid, aes(y = Ridership.other_modes, x = Spending.mass_transit))+
+  geom_point(size = 3, colour='#7DF048')+
+  labs(title = "Other Modes and spending before the pandemic",
+       x ="Spending", y = "Ridership")
+
+plota/plotb/plotc
+```
+
+Overall, the three plots show that mass transit spending may have the linear relationship with public transportation. As a result, simple linear regression models are applied to determine the hypothesis whether the government spending affect the ridership or not.
+
+**Hypothesis statement**
+
+$\alpha$: 0.05
+
+-   H0: The explanatory variable (`Spending.mass_transit`) is not statistically significant to the response variable - ridership ($\alpha_1$ = 0)
+
+-   H1: The explanatory variable (`Spending.mass_transit`) is statistically significant to the response variable - ridership ($\alpha_1$ != 0)
+
+**Hypothesis**
+
+```{r}
+# run simple linear regression model + take adjusted R square + p-value
+
+# bus
+bus_spend_mdl <- lm(before_covid$Ridership.route_bus~before_covid$Spending.mass_transit)
+
+# rail
+rail_spend_mdl <- lm(before_covid$Ridership.urban_rail~before_covid$Spending.mass_transit)
+
+# other modes
+other_spend_mdl <- lm(before_covid$Ridership.other_modes~before_covid$Spending.mass_transit)
+```
+
+```{r}
+mdl_ls <- c('bus_spend_mdl',"rail_spend_mdl","other_spend_mdl")
+pvalue_mdl <- c()
+rsquare_mdl <- c()
+
+for (i in 1:3) {
+  x <- summary(get(mdl_ls[i]))
+  pvalue_mdl[i] <- x$coefficients[2,4] # p-value explanatory variable
+  rsquare_mdl[i] <- x$adj.r.squared # adjusted R squared
+}
+names(pvalue_mdl) <- mdl_ls
+names(rsquare_mdl) <- mdl_ls
+```
+
+```{r}
+# print pvalue and r-squared indicator of model
+pvalue_mdl
+rsquare_mdl
+```
+
+**Hypothesis result**
+
+As the result, three models (`bus_spend_mdl`,`rail_spend_mdl`,`other_spend_mdl`) show the slope p-value smaller than $\alpha$ (0.05), at 9.214649e-11, 8.896205e-30, 1.264066e-44 respectively. Thus, I reject H0 and accept H1 that the explanatory variable (`Spending.mass_transit`) is statistically significant to the response variable - ridership ($\alpha_1$ != 0).
+
+**Evaluation: Effect of Mass Transit Spending on Ridership**
+
+Even though mass transit spending has an impact on the ridership of public transportation, its overall contribution remains relatively modest. Specifically, based on the adjusted R-squared values of the models, government investment does not appear to be a highly significant determinant of ridership for some transit modes. While approximately 51.23% of the variation in urban rail ridership can be explained by investment, this figure increases to 66.74% for other modes. In contrast, investment exerts only a limited influence on route bus ridership, accounting for just 20.62% of the variation. In a nutshell, investment is not the most critical factor influencing public transit ridership. Therefore, further external factors will be examined in order to identify additional determinants affecting ridership.
+
+# 5. Inspect other core influencing factors of mass transit in the US
+
+In addition to investment impact, other social and economic factors such as GDP, unemployment rate, and fuel price, also play an important role in affecting the variation of public transportation ridership.
+
+Therefore, with each ridership variable, I create a data frame with these external factors and use multiple linear regression model to determine the effect of these factors on the variation of ridership.
+
+```{r}
+# create a data frame with 3 main response variables
+
+# 1. Route bus ridership
+quarter_route_bus <- before_covid %>% 
+  mutate(quarter = paste0(year(Date),"-Q",quarter(Date))) %>%
+  group_by(quarter) %>% 
+  summarise(route_bus = mean(Ridership.route_bus),
+            spending_transit = mean(Spending.mass_transit),
+            diesel_price = mean(Highway.Diesel.Price),
+            gas_price = mean(Highway.Gasoline.Price),
+            unemployment_rate = mean(Unemployment.Rate)) %>% 
+  left_join(real_gdp, by = "quarter")
+
+# 2. Urban rail ridership
+quarter_urban_rail <- before_covid %>% 
+  mutate(quarter = paste0(year(Date),"-Q",quarter(Date))) %>%
+  group_by(quarter) %>% 
+  summarise(urban_rail = mean(Ridership.urban_rail),
+            spending_transit = mean(Spending.mass_transit),
+            diesel_price = mean(Highway.Diesel.Price),
+            gas_price = mean(Highway.Gasoline.Price),
+            unemployment_rate = mean(Unemployment.Rate),
+            rail_passengers = mean(Rail_passengers)) %>% 
+  left_join(real_gdp, by = "quarter")
+
+# 3. Other modes ridership
+quarter_other_mode <- before_covid %>% 
+  mutate(quarter = paste0(year(Date),"-Q",quarter(Date))) %>%
+  group_by(quarter) %>% 
+  summarise(other_modes = mean(Ridership.other_modes),
+            spending_transit = mean(Spending.mass_transit),
+            diesel_price = mean(Highway.Diesel.Price),
+            gas_price = mean(Highway.Gasoline.Price),
+            unemployment_rate = mean(Unemployment.Rate)) %>% 
+  left_join(real_gdp, by = "quarter")
+```
+
+## 5.1 Route Bus model
+
+### a/ Run model
+
+```{r}
+mul_bus_mdl <- lm(route_bus~., data = quarter_route_bus[ ,-1])
+summary(mul_bus_mdl)
+```
+
+### b/ Evaluation
+
+Overall, based on the adjusted R-squared, the model explains 85.32% of the variation in Route Bus ridership, indicating a strong fit. Among the predictors, only gas price shows a large p-value (0.25 \> 0.05), suggesting that fluctuations in gasoline prices do not significantly affect bus ridership.
+
+In contrast, the other variables — including government spending on mass transit, diesel price, unemployment rate, and real GDP — are statistically significant. Specifically, the negative coefficients of unemployment rate and real GDP indicate that higher unemployment and stronger economic growth are associated with lower bus ridership, possibly due to reduced commuting demand and increased private vehicle ownership. On the other hand, the positive coefficients of government investment and diesel price suggest that greater financial support for mass transit and higher fuel costs encourage greater reliance on bus services.
+
+## 5.2 Urban Rail model
+
+### a/ Run model
+
+```{r}
+mul_rail_mdl <- lm(urban_rail~., data = quarter_urban_rail[ ,-1])
+summary(mul_rail_mdl)
+```
+
+### b/ Problem identification
+
+Even though the adjusted R-squared of model is high (80.92%), only one variable is statistically significant (`rail_passengers`), which seem to be the issue of multicollinearity Thus, I check the Variance Inflation Factors (VIF) and check the correlation coefficient among variables.
+
+```{r}
+library(car)
+vif(mul_rail_mdl)
+```
+
+There are 4 variables having high VIF (\>10) =\> Multicollinearity
+
+```{r}
+# check the correlation coefficients
+cor_result <- cor(quarter_urban_rail[ ,c(-1,-2)])
+ggcorrplot(cor_result, lab =TRUE, type = "lower")
+```
+
+Based on the correlation heatmap, there are colinear pairs:
+
+-   diesel - gas price (0.95)
+
+-   spending transit - rail passengers (0.81)
+
+-   spending transit - real gdp (0.85)
+
+**=\> Multicollinear issues in Urban Rail model**
+
+### c/ Solution
+
+To address this issue, I refined the models by removing redundant variables and testing alternative specifications. In particular, government spending on transit and diesel price were excluded due to high multicollinearity. Furthermore, since the number of rail passengers closely mirrors urban rail ridership and thus serves as a proxy variable, I ran the model both with and without this variable to test the hypothesis.
+
+```{r}
+new_quarter_urbanrail <- quarter_urban_rail[ ,c(-1,-3,-4)]
+mul_rail_mdl_proxy <- lm(urban_rail~., data = new_quarter_urbanrail)
+summary(mul_rail_mdl_proxy)
+```
+
+```{r}
+new_quarter_urbanrail <- quarter_urban_rail[ ,c(-1,-3,-4,-7)]
+mul_rail_mdl_noproxy <- lm(urban_rail~., data = new_quarter_urbanrail)
+summary(mul_rail_mdl_noproxy)
+```
+
+### d/ Compare 2 models (proxy vs. non-proxy)
+
+Comparing the two models, with and without the proxy variable, reveals a clear trade-off. The model including the proxy achieves a higher adjusted R² (81.5%), but in this specification the unemployment rate is not statistically significant. In contrast, when the proxy is removed, the adjusted R² drops to 70.8%, yet the model becomes more interpretable: not only real GDP, but also gasoline price and unemployment rate emerge as statistically significant predictors of urban rail ridership.
+
+In conclusion, since my objective is to analyze the socio-economic factors that influence ridership rather than maximize predictive power, I prioritize the model without the proxy variable.
+
+## 5.3 Other modes model
+
+### a/ Run model
+
+```{r}
+mul_other_mdl <- lm(other_modes~., data = quarter_other_mode[ ,-1])
+summary(mul_other_mdl)
+```
+
+### b/ Evaluation
+
+In general, the adjusted R-squared shows that the model explains 83.14% of the variation in ridership for other modes, reflecting a strong explanatory power. All explanatory variables are statistically significant, with p-values below the alpha threshold of 0.05.
+
+Among these predictors, diesel price demonstrates a negative linear relationship, suggesting that rising diesel costs are associated with a decline in ridership. By contrast, spending on transit, gas price, unemployment rate, and real GDP all exhibit positive associations, indicating that increases in these factors correspond to higher ridership levels in other modes.
+
+## 5.4 Model result summary
+
+```{r}
+library(knitr)
+
+summary <- tibble(
+  type = c("Route Bus", "Urban Rail", "Other Modes"),
+  influencing_factors = c(
+    "spending_transit, diesel_price, unemployment_rate, real_gdp",
+    "gas_price, unemployment_rate, real_gdp",
+    "spending_transit, diesel_price, gas_price, unemployment_rate, real_gdp"
+  ),
+  direction_impact = c(
+    "+, +, -, -",
+    "+, +, +",
+    "+, -, +, +, +"
+  ),
+  adjusted_R_squared = c("85.3%", "70.8%", "83.1%")
+)
+
+kable(
+  summary,
+  format = "html",
+  align = "c",
+  caption = "Summary of Factors Influencing Ridership"
+)
+```
+
+# 6. Conclusion and recommendation
+
+## 6.1 Summary
+
+Prior to the COVID-19 pandemic, Route Bus and Urban Rail were the two dominant modes of public transit in the U.S. Our analysis of this stable period (2005-2019) reveals that ridership was not driven by a single factor, but rather a complex interplay of socio-economic forces.
+
+While Real GDP and the Unemployment Rate were consistent drivers across all transit types, their specific impacts tell a nuanced story about each mode's role. For instance, Route Bus ridership often moved counter-cyclically with the economy, whereas Urban Rail grew in line with it, highlighting their distinct user bases. Furthermore, external costs also played a key role: Urban Rail was sensitive to gasoline prices—a direct cost for car commuters—while Route Bus and Other Modes were more influenced by government spending and diesel prices.
+
+However, this long-standing equilibrium was fundamentally disrupted by the arrival of the COVID-19 pandemic. The event acted as a structural break, triggering a remarkable transformation in ridership patterns that rendered these historical models obsolete for future prediction.
+
+## 6.2 Recommendation
+
+Even though the COVID-19 pandemic has caused a dramatic disruption in ridership trends, which reduces the accuracy of future forecasting due to structural breaks, the core influencing factors of mass transit in the US still provide meaningful insights. These factors remain crucial in orienting recovery and long-term development strategies for this sector.
+
+For route bus, government investment should be prioritized for improving bus stations and fare policies to encourage public transit usage through better accessibility and affordability. At the same time, external macroeconomic conditions—such as diesel price, unemployment rate, and real GDP—need to be monitored on a regular basis. This allows policymakers to avoid inefficient allocation of resources into this mode when the demand potential weakens.
+
+Regarding urban rail, unemployment rate and GDP both have significant impacts. In periods of rising unemployment, policymakers should design more diverse and flexible fare schemes for unemployed individuals. This approach not only supports them during downturns but also fosters lasting ridership habits. Additionally, when gas prices are expected to increase, managers should proactively prepare by expanding capacity and improving operational performance during peak hours. Finally, continuous GDP growth signals potential for long-term demand expansion, which justifies further investment in rail infrastructure to enhance service quality and efficiency.
+
+With respect to other modes, governments need to pay close attention to macroeconomic variables, especially the unemployment rate and GDP, by introducing flexible pricing structures tailored to different demographic groups. Similarly, fluctuations in gas and diesel prices should be forecasted early, as they create opportunities to promote alternative transit modes alongside buses and urban rail. Moreover, directing investment toward a specific new transit service, when aligned with these influencing factors, could become an effective strategy for diversifying the overall mass transit system in the future.
+
+```{r}
+#| label: "Save data for dashboard"
+#| include: false
+
+output_ver2 <- list(
+  ridership_year = ridership.long,
+  df_trans = df_trans,
+  df_quar_bus = quarter_route_bus,
+  df_quar_rail = quarter_urban_rail,
+  df_quar_other = quarter_other_mode,
+  bus_reg = mul_bus_mdl,
+  other_reg = mul_other_mdl,
+  rail_reg = mul_rail_mdl_noproxy
+)
+
+saveRDS(output_ver2, file = 'ver2_cleaned_data.rds')
+```

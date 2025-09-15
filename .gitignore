@@ -1,0 +1,15 @@
+# Quarto outputs
+*_files/
+*.html
+*.nb.html
+.quarto/
+ver2_cleaned_data.rds
+
+# R artifacts
+.Rhistory
+.Rproj.user/
+.RData
+.Ruserdata
+
+# macOS
+.DS_Store
