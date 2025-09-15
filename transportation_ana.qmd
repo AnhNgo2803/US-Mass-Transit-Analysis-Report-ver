@@ -15,7 +15,7 @@ format:
 ![](images/topic_image.png){fig-align="center"}
 **Learn more**: [Insight Dashboard](https://leduyanhngo-dashboard-mass-transit.share.connect.posit.cloud/), [Github Repository](https://github.com/AnhNgo2803/US-Mass-Transit-Analysis-Report-ver)
 
-**Data Source**: [Kaggle - US Monthly Transportation Statistics](%22https://www.kaggle.com/datasets/utkarshx27/monthly-transportation-statistics/data%22)
+**Data Source**: [Kaggle - US Monthly Transportation Statistics](https://www.kaggle.com/datasets/utkarshx27/monthly-transportation-statistics/data)
 
 # 1. Executive Summary
 
